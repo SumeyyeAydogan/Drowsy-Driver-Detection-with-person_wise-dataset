@@ -1,0 +1,59 @@
+# --- Project data and large artifacts ---
+# Ignore full datasets and old splits
+/dataset/
+/old_splitted_dataset/
+
+/runs/
+/outputs/
+/checkpoints/
+/logs/
+/wandb/
+
+# Exported models and large binaries
+*.pt
+*.pth
+*.ckpt
+*.onnx
+*.tflite
+*.h5
+
+/figures/
+
+# --- Python cache/build ---
+__pycache__/
+*.py[cod]
+*$py.class
+
+# Distribution / packaging
+build/
+dist/
+.eggs/
+*.egg-info/
+*.egg
+
+# Virtual environments
+.venv/
+venv/
+env/
+ENV/
+
+# Jupyter
+.ipynb_checkpoints/
+
+# Test / coverage
+.pytest_cache/
+.tox/
+.nox/
+.coverage*
+htmlcov/
+
+# Editors / IDEs
+.vscode/
+.idea/
+
+# OS-specific junk
+.DS_Store
+Thumbs.db
+
+# Misc logs
+*.log
