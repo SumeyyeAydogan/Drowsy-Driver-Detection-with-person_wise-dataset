@@ -7,7 +7,7 @@ from src.model           import build_model
 from src.train           import train_model
 from src.utils           import plot_history, plot_metrics, create_run_directories, plot_dataset_distribution
 from src.evaluate        import evaluate_model
-from src.export          import save_model
+from src.gradcam_analysis import analyze_tf_keras_gradcam
 from src.run_manager     import RunManager
 from src.callbacks       import get_training_callbacks
 
@@ -93,7 +93,10 @@ if __name__ == "__main__":
     print("🎯 Starting training...")
     
     # Get all training callbacks (custom + standard Keras callbacks)
-    callbacks = get_training_callbacks(run_manager)
+    gradcam_epoch_outputs = os.path.join(run_manager.run_dir, "gradcam_epoch_outputs")
+    gradcam_log_file = os.path.join(run_manager.run_dir, "gradcam_debug.log")
+    callbacks = get_training_callbacks(run_manager, val_ds, gradcam_epoch_outputs, 
+                                      max_samples=5, gradcam_log_file=gradcam_log_file)
     
     # Train the model
     history = train_model(
@@ -117,15 +120,14 @@ if __name__ == "__main__":
 
     # 9.5) Evaluate on training set
     print("🧪 Evaluating model on training set...")
-    train_plots_dir = os.path.join(run_manager.run_dir, "plots", "train")
+    train_plots_dir = os.path.join(run_manager.run_dir, "plots", "train_gradcam")
     os.makedirs(train_plots_dir, exist_ok=True)
-    evaluate_model(
-        model,
-        train_ds,
-        plots_dir=train_plots_dir,
-        subject_diverse_dir=os.path.join(output_dir, "train"),
-        misclassified_only=True,
-        ds_name="train"
+    analyze_tf_keras_gradcam(
+        model=model,
+        test_ds=train_ds,
+        output_dir=train_plots_dir,
+        num_samples=30,
+        class_names=tuple(class_names)
     )
     print("✅ Training evaluation completed!")
 
