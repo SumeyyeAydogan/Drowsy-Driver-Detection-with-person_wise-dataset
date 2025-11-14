@@ -215,18 +215,28 @@ class GradCAM:
 
 
 def analyze_model_gradcam(model, test_ds, num_samples=5, output_dir="gradcam_results",
-                          class_names=('Not Drowsy', 'Drowsy'), threshold=0.5,
-                          subject_diverse_dir=None, misclassified_only=False):
+                         class_names=('Not Drowsy', 'Drowsy'), threshold=0.5,
+                         subject_diverse_dir=None, misclassified_only=False,
+                         separate_correct_and_incorrect=False, max_per_category=50):
     """
     Analyze model with GradCAM on samples from test_ds.
     Handles binary sigmoid outputs and 2-class softmax models.
     """
-    # If we want to keep misclassified separate, write under a subfolder
+    # Prepare output directories based on requested mode
     if misclassified_only:
         output_dir = os.path.join(output_dir, 'misclassified')
-    os.makedirs(output_dir, exist_ok=True)
+        os.makedirs(output_dir, exist_ok=True)
+    elif separate_correct_and_incorrect:
+        correct_dir = os.path.join(output_dir, 'correct')
+        incorrect_dir = os.path.join(output_dir, 'misclassified')
+        os.makedirs(correct_dir, exist_ok=True)
+        os.makedirs(incorrect_dir, exist_ok=True)
+    else:
+        os.makedirs(output_dir, exist_ok=True)
     gradcam = GradCAM(model)
     sample_count = 0
+    correct_saved = 0
+    incorrect_saved = 0
 
     if subject_diverse_dir is not None:
         # Prefer diversity: sample at most one image per subject from the directory
@@ -257,7 +267,9 @@ def analyze_model_gradcam(model, test_ds, num_samples=5, output_dir="gradcam_res
         rng.shuffle(subjects)
 
         for subj in subjects:
-            if sample_count >= num_samples:
+            if sample_count >= num_samples and not separate_correct_and_incorrect:
+                break
+            if separate_correct_and_incorrect and (correct_saved >= max_per_category and incorrect_saved >= max_per_category):
                 break
             examples = subj_to_examples[subj]
             fpath, true_idx = examples[rng.integers(0, len(examples))]
@@ -266,40 +278,62 @@ def analyze_model_gradcam(model, test_ds, num_samples=5, output_dir="gradcam_res
             img = tf.keras.utils.load_img(fpath, target_size=(224, 224))
             img_arr = tf.keras.utils.img_to_array(img) / 255.0
 
-            # Optionally filter to misclassified only
-            if misclassified_only:
-                pred_vec = model.predict(img_arr[None, ...], verbose=0)
-                _, pred_idx = _pred_to_prob_and_class(pred_vec)
-                if pred_idx == int(true_idx):
+            # Predict for decision logic
+            pred_vec = model.predict(img_arr[None, ...], verbose=0)
+            prob, pred_idx = _pred_to_prob_and_class(pred_vec)
+
+            # Handle modes
+            if misclassified_only and pred_idx == int(true_idx):
+                continue
+
+            # Decide destination and enforce caps
+            if separate_correct_and_incorrect:
+                is_correct = (pred_idx == int(true_idx))
+                if is_correct and correct_saved >= max_per_category:
+                    continue
+                if (not is_correct) and incorrect_saved >= max_per_category:
                     continue
 
-            fig, pred_vec = gradcam.visualize(
+            fig, _ = gradcam.visualize(
                 img_arr,
                 class_names=class_names,
                 threshold=threshold,
                 target_class=None,
                 true_class_idx=true_idx,
-                save_path=os.path.join(output_dir, f'sample_{sample_count:02d}.png')
+                save_path=(
+                    os.path.join(correct_dir if (separate_correct_and_incorrect and pred_idx == int(true_idx)) else (incorrect_dir if separate_correct_and_incorrect else output_dir),
+                                 f'sample_{sample_count:02d}.png')
+                )
             )
-
-            prob, pred_idx = _pred_to_prob_and_class(pred_vec)
             print(
                 f"Sample {sample_count:02d} (subj={subj}): "
                 f"True={class_names[true_idx]}, Pred={class_names[pred_idx]} ({prob:.3f})"
             )
 
             plt.close(fig)
-            sample_count += 1
+            if separate_correct_and_incorrect:
+                if pred_idx == int(true_idx):
+                    correct_saved += 1
+                else:
+                    incorrect_saved += 1
+                # Use combined counter for filename uniqueness
+                sample_count += 1
+            else:
+                sample_count += 1
     else:
         for batch_images, batch_labels in test_ds:
-            if sample_count >= num_samples:
+            if sample_count >= num_samples and not separate_correct_and_incorrect:
+                break
+            if separate_correct_and_incorrect and (correct_saved >= max_per_category and incorrect_saved >= max_per_category):
                 break
 
             # Predict batch once for logging (optional; GradCAM does its own forward pass anyway)
             batch_preds = model.predict(batch_images, verbose=0)
 
             for i in range(len(batch_images)):
-                if sample_count >= num_samples:
+                if sample_count >= num_samples and not separate_correct_and_incorrect:
+                    break
+                if separate_correct_and_incorrect and (correct_saved >= max_per_category and incorrect_saved >= max_per_category):
                     break
 
                 image = batch_images[i].numpy()
@@ -309,6 +343,12 @@ def analyze_model_gradcam(model, test_ds, num_samples=5, output_dir="gradcam_res
                 prob_local, pred_idx_local = _pred_to_prob_and_class(local_pred)
                 if misclassified_only and pred_idx_local == int(true_idx):
                     continue
+                if separate_correct_and_incorrect:
+                    is_correct = (pred_idx_local == int(true_idx))
+                    if is_correct and correct_saved >= max_per_category:
+                        continue
+                    if (not is_correct) and incorrect_saved >= max_per_category:
+                        continue
                 target_class = None
                 if np.array(batch_preds).ndim == 2 and np.array(batch_preds).shape[1] == 2:
                     target_class = 1  # explain "Drowsy"
@@ -319,7 +359,10 @@ def analyze_model_gradcam(model, test_ds, num_samples=5, output_dir="gradcam_res
                     threshold=threshold,
                     target_class=target_class,
                     true_class_idx=true_idx,
-                    save_path=os.path.join(output_dir, f'sample_{sample_count:02d}.png')
+                    save_path=(
+                        os.path.join(correct_dir if (separate_correct_and_incorrect and pred_idx_local == int(true_idx)) else (incorrect_dir if separate_correct_and_incorrect else output_dir),
+                                     f'sample_{sample_count:02d}.png')
+                    )
                 )
 
                 prob, pred_idx = _pred_to_prob_and_class(pred_vec)
@@ -329,6 +372,16 @@ def analyze_model_gradcam(model, test_ds, num_samples=5, output_dir="gradcam_res
                 )
 
                 plt.close(fig)
-                sample_count += 1
+                if separate_correct_and_incorrect:
+                    if pred_idx_local == int(true_idx):
+                        correct_saved += 1
+                    else:
+                        incorrect_saved += 1
+                    sample_count += 1
+                else:
+                    sample_count += 1
 
-    print(f"GradCAM analysis complete! Results saved in: {output_dir}/")
+    if separate_correct_and_incorrect:
+        print(f"GradCAM analysis complete! Saved {correct_saved} correct and {incorrect_saved} misclassified samples in: {output_dir}/")
+    else:
+        print(f"GradCAM analysis complete! Results saved in: {output_dir}/")
