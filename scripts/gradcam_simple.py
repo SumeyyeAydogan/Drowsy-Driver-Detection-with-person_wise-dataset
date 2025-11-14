@@ -1,83 +1,113 @@
 """
-Simple GradCAM Usage Example
+Simple script to test GradCAM visualization.
+Modify the variables below to test different models and settings.
 """
+
 import os
-import numpy as np
+import sys
 import tensorflow as tf
-from src.model import build_model
-from src.gradcam import GradCAM, analyze_model_gradcam, _pred_to_prob_and_class
+
+# Add project root to path
+project_root = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
+sys.path.insert(0, project_root)
+
+from src.gradcam_analysis import analyze_subjects_gradcam, analyze_tf_keras_gradcam
 from src.dataloader import get_binary_pipelines
 
+# ============================================
+# CONFIGURATION - Modify these as needed
+# ============================================
 
-def main():
-    """
-    Simple GradCAM example
-    """
-    print("🎯 Simple GradCAM Example")
-    print("=" * 40)
-    
-    # Configure output directories once
-    base_run_dir = "runs/old/30_e-5_new_mid-aug"
-    plots_dir = os.path.join(base_run_dir, "plots", "train", "gradcam")
-    os.makedirs(plots_dir, exist_ok=True)
+# Model path
+MODEL_PATH = os.path.join(project_root, "runs", "20_epoch", "models", "final_model.h5")
 
-    # 1. Load or create model
-    print("1. Loading model...")
-    try:
-        # Try to load a trained model
-        model_path = os.path.join(base_run_dir, "models", "final_model.h5")
-        model = tf.keras.models.load_model(model_path)
-        print(f"✅ Loaded trained model: {model_path}")
-    except:
-        # Create new model if no trained model found
-        model = build_model()
-        print("⚠️  Using untrained model")
-    
-    # 2. Load test data
-    print("2. Loading test data...")
-    try:
-        train_ds, val_ds, test_ds, class_names = get_binary_pipelines(
-        "old_splitted_dataset",
-        img_size=(224, 224),
-        batch_size=32,
-        seed=42
-    )
-        print("✅ Test data loaded")
-    except:
-        print("❌ Error loading test data")
-        return
-    
-    # 3. Single image example
-    print("3. Single image GradCAM...")
-    for batch_images, batch_labels in train_ds.take(1):
-        sample_image = batch_images[0].numpy()
-        true_label = batch_labels[0].numpy()
-        # Ensure true_label is an integer class index (handle one-hot or scalar)
-        try:
-            true_label_idx = int(np.argmax(true_label)) if np.ndim(true_label) > 0 else int(true_label)
-        except Exception:
-            true_label_idx = int(true_label)
-        break
-    
-    gradcam = GradCAM(model)
-    fig, prediction = gradcam.visualize(
-        sample_image, 
-        class_names=class_names,
-        save_path=os.path.join(plots_dir, "gradcam_example.png"),
-        true_class_idx=true_label_idx
-    )
-    
-    prob, pred_class = _pred_to_prob_and_class(prediction)
-    print(f"   True: {['Not Drowsy', 'Drowsy'][true_label_idx]}")
-    print(f"   Pred: {['Not Drowsy', 'Drowsy'][pred_class]} ({prob:.3f})")
-    
-    # 4. Batch analysis
-    print("4. Batch analysis...")
-    analyze_model_gradcam(model, train_ds, num_samples=10, output_dir=plots_dir)
-    
-    print("\n✅ GradCAM example completed!")
-    print(f"📁 Check 'gradcam_example.png' and {base_run_dir}/plots/train/gradcam/ directory")
+# Dataset directory
+DATASET_ROOT = os.path.join(project_root, "splitted_dataset")
 
+# Output directory (if None, will be auto-generated next to model)
+OUTPUT_DIR = None
+
+# Number of samples to process
+NUM_SAMPLES = 30
+
+# Method: "custom" or "tf_keras_vis"
+METHOD = "custom"
+
+# Random seed
+SEED = 42
+
+# ============================================
+# MAIN EXECUTION
+# ============================================
 
 if __name__ == "__main__":
-    main()
+    print("🎯 GradCAM Test Script")
+    print("=" * 50)
+    
+    # Load model
+    print(f"📂 Loading model: {MODEL_PATH}")
+    try:
+        model = tf.keras.models.load_model(MODEL_PATH)
+        print("✅ Model loaded successfully!")
+    except Exception as e:
+        print(f"❌ Failed to load model: {e}")
+        sys.exit(1)
+    
+    # Determine output directory
+    if OUTPUT_DIR is None:
+        model_dir = os.path.dirname(MODEL_PATH)
+        if os.path.basename(model_dir) == "models":
+            run_root = os.path.dirname(model_dir)
+        else:
+            run_root = model_dir
+        
+        method_suffix = "tf_keras" if METHOD == "tf_keras_vis" else "custom"
+        OUTPUT_DIR = os.path.join(run_root, f"gradcam_{method_suffix}")
+    
+    print(f"📁 Output directory: {OUTPUT_DIR}")
+    
+    # Run analysis based on method
+    if METHOD == "tf_keras_vis":
+        print(f"\n🎯 Running tf-keras-vis GradCAM analysis...")
+        try:
+            train_ds, val_ds, test_ds, class_names = get_binary_pipelines(DATASET_ROOT)
+            print("✅ Dataset loaded from pipeline")
+            
+            analyze_tf_keras_gradcam(
+                model=model,
+                test_ds=test_ds,
+                output_dir=OUTPUT_DIR,
+                num_samples=NUM_SAMPLES,
+                class_names=tuple(class_names),
+                seed=SEED
+            )
+        except ImportError as e:
+            print(f"❌ Error: {e}")
+            print("   Install tf-keras-vis with: pip install tf-keras-vis")
+            sys.exit(1)
+        except Exception as e:
+            print(f"❌ Error during analysis: {e}")
+            sys.exit(1)
+    else:
+        print(f"\n🎯 Running custom GradCAM analysis...")
+        test_dir = os.path.join(DATASET_ROOT, "test")
+        
+        if not os.path.exists(test_dir):
+            print(f"❌ Test directory not found: {test_dir}")
+            sys.exit(1)
+        
+        try:
+            analyze_subjects_gradcam(
+                model=model,
+                test_dir=test_dir,
+                output_dir=OUTPUT_DIR,
+                num_samples=NUM_SAMPLES,
+                seed=SEED
+            )
+        except Exception as e:
+            print(f"❌ Error during analysis: {e}")
+            sys.exit(1)
+    
+    print(f"\n✅ Analysis completed!")
+    print(f"📁 Results saved to: {OUTPUT_DIR}")
+
