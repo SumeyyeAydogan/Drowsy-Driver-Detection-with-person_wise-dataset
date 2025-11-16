@@ -2,6 +2,7 @@
 import tensorflow as tf
 import os
 import random
+import numpy as np
 from tensorflow.keras.callbacks import EarlyStopping, ReduceLROnPlateau
 from src.gradcam import CustomGradCAM
 
@@ -75,12 +76,16 @@ class GradCAMEpochCallback(tf.keras.callbacks.Callback):
             log_path = None
         
         # Create new gradcam instance for this epoch (log every sample)
-        gradcam = CustomGradCAM(self.model, log_file=log_path, debug_every=1)
+        gradcam = CustomGradCAM(self.model, log_file=log_path, debug_every=1, layer_name='block7a_project_conv')
         print(f"[GradCAM Callback] Created GradCAM for epoch {epoch_num} (log: {log_path})")
 
-        # 1️⃣ Collect all samples from dataset
+        # 1️⃣ Collect all samples from dataset (support (x,y) and (x,y,w))
         all_samples = []
-        for batch_images, batch_labels in self.test_ds:
+        for batch in self.test_ds:
+            if isinstance(batch, (tuple, list)) and len(batch) == 3:
+                batch_images, batch_labels, _ = batch
+            else:
+                batch_images, batch_labels = batch
             for i in range(len(batch_images)):
                 all_samples.append((batch_images[i], batch_labels[i]))
         
@@ -139,10 +144,12 @@ class GradCAMEpochCallback(tf.keras.callbacks.Callback):
 
         print(f"[GradCAM] Saved {sample_count} GradCAM samples for epoch {epoch_num}")
 
+
 # ------------------------------
 # 3. Function to get all training callbacks
 # ------------------------------
-def get_training_callbacks(run_manager, val_ds=None, gradcam_output_dir="gradcam_epoch_outputs", max_samples=5, gradcam_log_file=None):
+def get_training_callbacks(run_manager, val_ds=None, gradcam_output_dir="gradcam_epoch_outputs", max_samples=5, gradcam_log_file=None, 
+                          train_ds=None, monitor_sample_weights=False, sample_weight_log_file=None):
     """
     Returns all training callbacks including checkpoint, early stopping,
     learning rate scheduler, and optional GradCAM visualizations.
@@ -153,21 +160,32 @@ def get_training_callbacks(run_manager, val_ds=None, gradcam_output_dir="gradcam
         gradcam_output_dir: folder to save GradCAM outputs
         max_samples: max number of samples per epoch to save
         gradcam_log_file: optional path to save GradCAM debug logs
+        train_ds: Training dataset (required if monitor_sample_weights=True)
+        monitor_sample_weights: Whether to monitor sample_weights during training
+        sample_weight_log_file: Path to save sample_weight statistics (optional)
 
     Returns:
         list of callbacks
     """
-    callbacks = [
+
+    # Stage 1 (freeze) için
+    callbacks_stage1 = [
         CheckpointCallback(run_manager),
-        #EarlyStopping(monitor='val_auc', patience=5, restore_best_weights=True),
-        ReduceLROnPlateau(monitor='val_auc', factor=0.5, patience=3, min_lr=1e-6)
+        ReduceLROnPlateau(monitor='val_auc', factor=0.5, patience=2, min_lr=1e-6, verbose=1),
+        EarlyStopping(monitor='val_auc', patience=3, restore_best_weights=True, verbose=1),
     ]
 
+    # Stage 2 (fine-tuning) için
+    callbacks_stage2 = [
+        CheckpointCallback(run_manager),
+        ReduceLROnPlateau(monitor='val_auc', factor=0.5, patience=4, min_lr=1e-6, verbose=1),
+        EarlyStopping(monitor='val_auc', patience=5, restore_best_weights=True, verbose=1),
+    ]
     
     if val_ds is not None:
-        callbacks.append(
+        callbacks_stage2.append(
             GradCAMEpochCallback(test_ds=val_ds, output_dir=gradcam_output_dir, 
                                max_samples=max_samples, log_file=gradcam_log_file)
         )
 
-    return callbacks
+    return callbacks_stage1, callbacks_stage2

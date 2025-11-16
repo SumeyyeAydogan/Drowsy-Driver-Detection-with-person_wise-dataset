@@ -68,8 +68,24 @@ class RunManager:
     def save_final_model(self, model):
         """Save final trained model"""
         model_path = os.path.join(self.run_dir, "models", "final_model.h5")
-        model.save(model_path)
-        print(f"💾 Final model saved: {model_path}")
+        try:
+            # Try saving as .h5 first
+            model.save(model_path)
+            print(f"💾 Final model saved: {model_path}")
+        except Exception as e:
+            print(f"⚠️  Error saving as .h5: {e}")
+            # Try saving as SavedModel format
+            try:
+                saved_model_path = os.path.join(self.run_dir, "models", "final_model")
+                model.save(saved_model_path, save_format='tf')
+                print(f"💾 Final model saved as SavedModel: {saved_model_path}")
+            except Exception as e2:
+                print(f"❌ Error saving as SavedModel: {e2}")
+                # Last resort: save weights only
+                weights_path = os.path.join(self.run_dir, "models", "final_model_weights.h5")
+                model.save_weights(weights_path)
+                print(f"💾 Model weights saved: {weights_path}")
+                print("⚠️  Note: Model architecture needs to be rebuilt to load these weights")
         
     def save_best_model(self, model):
         """Save best model (if you have one)"""

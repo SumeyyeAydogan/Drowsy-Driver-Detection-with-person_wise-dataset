@@ -3,7 +3,7 @@ from datetime import datetime
 
 from src.split_person_wise   import split_person_wise_unified
 from src.dataloader      import get_binary_pipelines
-from src.model           import build_model
+from src.model_pretrained import build_model
 from src.train           import train_model
 from src.utils           import plot_history, plot_metrics, create_run_directories, plot_dataset_distribution
 from src.evaluate        import evaluate_model
@@ -36,7 +36,7 @@ if __name__ == "__main__":
 
     # 4) Create run manager
     print("📁 Creating run manager...")
-    run_manager = RunManager("20_epoch")
+    run_manager = RunManager("15_imagenet")
     print(f"✅ Run manager created: {run_manager.run_dir}")
 
     # 5) tf.data pipelines
@@ -46,7 +46,7 @@ if __name__ == "__main__":
         output_dir,
         img_size=(224, 224),
         batch_size=32,
-        seed=42
+        seed=42,
     )
     print("✅ Datasets loaded successfully!")
 
@@ -72,7 +72,7 @@ if __name__ == "__main__":
         print("🆕 Starting training from scratch")
     
     # 7) Save initial config
-    epoch_count=20
+    epoch_count=15
     config = {
         "run_name": run_manager.run_name,
         "epochs": epoch_count,
@@ -95,17 +95,28 @@ if __name__ == "__main__":
     # Get all training callbacks (custom + standard Keras callbacks)
     gradcam_epoch_outputs = os.path.join(run_manager.run_dir, "gradcam_epoch_outputs")
     gradcam_log_file = os.path.join(run_manager.run_dir, "gradcam_debug.log")
-    callbacks = get_training_callbacks(run_manager, val_ds, gradcam_epoch_outputs, 
+    callbacks_stage1, callbacks_stage2 = get_training_callbacks(run_manager, val_ds, gradcam_epoch_outputs, 
                                       max_samples=5, gradcam_log_file=gradcam_log_file)
-    
+
+    import numpy as np
+    all_labels = []
+    for _, y in train_ds.take(50):
+        all_labels.extend(y.numpy().flatten())
+    print("Label dağılımı:", np.unique(all_labels, return_counts=True))
+
+    images, labels = next(iter(train_ds))
+    preds = model.predict(images[:8])
+    print("İlk batch pred aralığı:", preds.min(), preds.max())
+
     # Train the model
     history = train_model(
         model, 
         train_ds, 
         val_ds, 
         epochs=epoch_count,
-        callbacks=callbacks,  # Add all callbacks
-        initial_epoch=initial_epoch  # Resume from checkpoint if available
+        callbacks_stage1=callbacks_stage1,  # Add all callbacks
+        callbacks_stage2=callbacks_stage2,
+        #initial_epoch=initial_epoch  # Resume from checkpoint if available
     )
     print("✅ Training completed!")
 
